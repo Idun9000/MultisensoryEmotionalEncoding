@@ -6,4 +6,5 @@ The Multisensory Relation Between Perception and Memory
 
 ## Hypotheses investigated
 H_1: Perceiving multisensory auditory-visual emotional congruency will enhance memory accuracy
+
 H_2: Perceiving multisensory auditory-visual emotional congruency will enhance memory certainty
