@@ -1,0 +1,386 @@
+---
+title: "Data_Analysis"
+author: "Tilde Sloth"
+date: "11/9/2022"
+output: html_document
+---
+
+# Packages
+```{r}
+pacman::p_load(tidyverse, relaimpo, earth, brms, bayesplot, rstanarm, msm, cmdstanr, lme4, caret, lmerTest, grid, gridExtra)
+```
+
+# Valence filtering
+
+### Music
+```{r}
+# Reading in the spotify valence data
+music <- read_csv("spotifydata.csv", show_col_types = FALSE)
+```
+
+
+```{r}
+# Filtering out all the NA's
+music <- music %>% drop_na()
+
+# Making a subset - high valence category
+music_high_valence <- music %>% 
+  filter(valence > 0.8 & genre == "classical")
+
+# Making a subset - low valence category
+music_low_valence <- music %>% 
+  filter(valence < 0.2 & genre == "classical")
+```
+
+
+```{r}
+# Making a model of valence - Relative Importance Method
+RIMregressor <- lm(valence ~ danceability + energy + loudness + key + mode + speechiness + acousticness + instrumentalness + liveness + tempo, data = music) # fit lm() model
+
+relImportance <- calc.relimp(RIMregressor, type = "lmg", rela = TRUE) # calculate relative importance scaled to 100
+
+sort(relImportance$lmg, decreasing=TRUE) # relative importance
+```
+
+
+```{r}
+# Making a model of valence - MARS (earth package) Method (uses generalized cross validation GCV)
+
+MARSregressor <- earth(valence ~ danceability + energy + loudness + key + mode + speechiness + acousticness + instrumentalness + liveness + tempo, data = music) # build model
+
+ev <- evimp (MARSregressor) # estimate variable importance
+
+plot (ev)
+```
+
+
+### Images
+```{r}
+# Reading in the images from the OASIS data base
+images <- read_csv("OASIS.csv", show_col_types = FALSE)
+
+```
+
+```{r}
+# Min max normalization of the mean and arousal so the range is from 0 to 1 just like in the music valence data
+images <- images %>% 
+  mutate(Valence_mean = (Valence_mean - min(Valence_mean))/(max(Valence_mean)-min(Valence_mean)), 
+         Arousal_mean = (Arousal_mean - min(Arousal_mean))/(max(Arousal_mean)-min(Arousal_mean)))
+```
+
+```{r}
+# Making a subset - high valence images
+images_high_valence <- images %>% 
+  filter(between(Arousal_mean, 0.20, 0.80) & Valence_mean > 0.7)
+
+# Making a subset - low valence images
+images_low_valence <- images %>% 
+  filter(between(Arousal_mean, 0.20, 0.80) & Valence_mean < 0.3)
+```
+
+# Preprocessing
+```{r}
+#Reading in the data
+files <- list.files(path = "data", pattern = ".csv", full.names = T)
+data <- map_dfr(files, read_csv)
+
+```
+
+```{r}
+#Making valence into a factor
+data <- data %>% 
+  mutate(valence = as.factor(valence))
+
+#Changing an incorrect value of valence (The participant thought that the scale was reverse)
+data$scale[data$subject_nr == "14"] <- 3
+
+#Making valence into a dummy variable
+data <-  data %>% 
+  mutate(valence_positive = ifelse(valence == "positive", 1, 0))
+
+#Removing NA's in valence column - to only look at the pictures that they say
+data <- data %>% 
+  filter(!is.na(valence))
+
+#Creating general accuracy column for plots
+data <- data %>% 
+  group_by(subject_nr) %>% 
+  mutate(accuracy = sum(as.numeric(correct))/40)
+
+```
+
+```{r}
+# Making subsets
+data_positive <- data %>% 
+  filter(valence == "positive")
+
+data_negative <- data %>% 
+  filter(valence == "negative")
+
+data_positive <- data_positive %>%
+  group_by(subject_nr) %>% 
+  mutate(accuracy = sum(as.numeric(correct))/20) %>% 
+  mutate(condition = as.factor(condition))
+
+data_negative <- data_negative %>% 
+  mutate(accuracy = sum(as.numeric(correct))/20) %>% 
+  mutate(condition = as.factor(condition))
+
+#Filter out actual images
+data <- data %>% 
+  filter(valence == "positive" | valence == "negative")
+
+data <- data %>% 
+  mutate(subject_nr = as.factor(subject_nr), condition = as.factor(condition), valence = as.factor(valence), correct = as.factor(correct))
+
+
+```
+
+# Participant information
+```{r}
+# Information about age
+mean(data$age) #25.3
+sd(data$age) #9.12
+
+#Making gender into a dummy variable
+data$gender <- ifelse(data$gender == "Kvinde", 1, 0)
+
+sum(data$gender)/800 # 60 % are women
+
+```
+
+# Valence measures
+```{r}
+condition2 <- data %>% 
+  filter(condition == "2")
+
+condition3 <- data %>% 
+  filter(condition == "3")
+
+condition2 %>% 
+  dplyr::select(scale)
+
+#Calculating mean valence score
+mean(condition2$scale)
+sd(condition2$scale)
+mean(condition3$scale)
+sd(condition3$scale)
+
+#Plotting valence measures
+data23 <- data %>% 
+  filter(condition == "2" | condition == "3")
+
+data23 %>% 
+  ggplot(aes(x = scale, fill = condition)) + geom_density(alpha = 0.5) + ggtitle("Perceived auditory valence across conditions") + theme_minimal() + scale_fill_manual(values=c("darkseagreen1", "coral1"))
+
+data23 %>%
+  ggplot(aes(x = condition, y = scale, fill = condition)) + geom_violin(alpha = 0.5) + ggtitle("Perceived auditory valence across conditions")+ theme_minimal()+ scale_fill_manual(values=c("darkseagreen1", "coral1"))
+
+```
+
+
+# Visualizing accuracy
+```{r}
+#Violin plots
+v1 <- data_positive %>% 
+  ggplot(aes(x = condition, y = accuracy, fill = condition)) + geom_violin(alpha = 0.5) + ylim(0.3,1) + ggtitle("Positive valence images")+ theme_minimal() + scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+v2 <- data_negative %>% 
+  ggplot(aes(x = condition, y = accuracy, fill = condition)) + geom_violin(alpha = 0.5) + ylim(0.3,1) + ggtitle("Negative valence images")+ theme_minimal()+ scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+violin_plot <- gridExtra::grid.arrange(v1,v2, ncol = 2, nrow = 1, top = textGrob("Accuracy across conditions", gp=gpar(fontsize=18, font=3)))
+
+# Saving the plot
+ggsave(file = "Accuracy across conditions.pdf", violin_plot, width = 20, height = 10, units = "cm")
+```
+
+
+```{r}
+#Density plots
+d1 <- data_positive %>% 
+  ggplot(aes(x = accuracy, fill = condition)) + geom_density(alpha = 0.5) + ggtitle("Memory accuracy for positive valence images across conditions")+ theme_minimal() + scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+d2 <- data_negative %>% 
+  ggplot(aes(x = accuracy, fill = condition)) + geom_density(alpha = 0.5) + ggtitle("Memory accuracy for negative valence images across conditions")+ theme_minimal()+ scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+gridExtra::grid.arrange(d1,d2)
+```
+
+
+```{r}
+#Boxplots
+b1 <- data_positive %>% 
+  ggplot(aes(x = condition, y = accuracy, fill = condition)) + geom_boxplot(alpha = 0.5) + ggtitle("Accuracy for positive valence images across conditions")+ theme_minimal()+ scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+b2 <- data_negative %>% 
+  ggplot(aes(x = condition, y = accuracy, fill = condition)) + geom_boxplot(alpha = 0.5) + ggtitle("Accuracy for negative valence images across conditions")+ theme_minimal()+ scale_fill_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+gridExtra::grid.arrange(b1, b2)
+
+```
+
+
+# Model that predicts correct response
+```{r}
+model <- glmer(formula = correct ~ condition * valence + (1|subject_nr), family = binomial(link = logit), data = data)
+
+summary(model)
+```
+# Probability of answering correct for condition 1 - positive valence
+```{r}
+boot::inv.logit(1.0770 + 0.5195 - 0.5555)
+```
+
+
+# Probability of answering correct for condition 1 - negative valence
+```{r}
+boot::inv.logit(1.0770 + 0.5195)
+```
+
+
+# Probability of answering correct for condition 2 - positive valence
+```{r}
+boot::inv.logit(1.0770 - 0.4584)
+```
+```{r}
+mean(condition2$accuracy)
+mean(condition3$accuracy)
+```
+
+
+# Probability of answering correct for condition 2 - negative valence
+```{r}
+boot::inv.logit(1.0770)
+```
+
+
+# Probability of answering correct for condition 3 - positive valence
+```{r}
+boot::inv.logit(1.0770 - 0.4584 - 0.1488)
+```
+
+
+# Probability of answering correct for condition 3 - negative valence
+
+```{r}
+boot::inv.logit(1.0770 + 0.5554)
+```
+```{r}
+# Making the outcome more interpretable - This is probability of correct in percentage
+se <- sqrt(diag(vcov(model)))
+(tab <- cbind(Est = fixef(model), LL = fixef(model) - 1.96 * se, UL = fixef(model) + 1.96 *
+    se))
+boot::inv.logit(tab)
+# However these values are relative, so we can only really use it for the intercept
+```
+
+
+# Mousetracking Analysis
+```{r}
+pacman::p_load(mousetrap)
+```
+
+
+```{r}
+#importing data as mousetrap object
+mp <- mt_import_mousetrap(data_positive)
+mn <- mt_import_mousetrap(data_negative)
+
+#filtering out the correct answers
+mp_correct <- mt_subset(mp, correct == '1')
+mn_correct <- mt_subset(mn, correct == "1")
+```
+
+
+```{r}
+# align the mouse trajectories to one side
+mp_correct <- mt_remap_symmetric(mp_correct, use = "trajectories", remap_xpos = "left")
+mn_correct <- mt_remap_symmetric(mn_correct, use = "trajectories", remap_xpos = "left")
+```
+
+
+```{r}
+#Exclude initiation
+mp_correct <- mt_exclude_initiation(mp_correct)
+mn_correct <- mt_exclude_initiation(mn_correct)
+```
+
+```{r}
+# Time normalize the data
+mp_correct <- mt_time_normalize(mp_correct)
+mn_correct <- mt_time_normalize(mn_correct)
+
+```
+
+```{r}
+#plotting all trial curves with colors based on the condition
+
+# for positive words/images
+mt_plot(
+  mp_correct, use = "tn_trajectories",
+  x = "xpos", y = "ypos", color = "condition") +
+  theme_minimal() + labs(title = "Aligned time-normalized mouse-tracking data", 
+                           x = "Position (x)",
+                           y = "Position (y)")+ ggplot2::scale_colour_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+# for negative words/images
+mt_plot(
+  mn_correct, use = "tn_trajectories",
+  x = "xpos", y = "ypos", color = "condition") +
+  theme_minimal() + labs(title = "Aligned time-normalized mouse-tracking data", 
+                           x = "Position (x)",
+                           y = "Position (y)")+ ggplot2::scale_colour_manual(values=c("darkseagreen1","khaki1", "coral1"))
+```
+
+
+```{r}
+#plotting aggregated curves with colors based on the condition
+
+# for positive words/images
+positive_trajectory <- mt_plot_aggregate(mp_correct, use = 'tn_trajectories', color = 'condition')+
+  theme_minimal() + labs(title = "Positive valence images", 
+                           x = "Position (x)",
+                           y = "Position (y)") + ggplot2::scale_colour_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+# for negatuve words/images
+negative_trajectory <- mt_plot_aggregate(mn_correct, use = "tn_trajectories", color = "condition")+
+  theme_minimal() + labs(title = "Negative valence images", 
+                           x = "Position (x)",
+                           y = "Position (y)") + ggplot2::scale_colour_manual(values=c("darkseagreen1","khaki1", "coral1"))
+
+mouse_trac <- gridExtra::grid.arrange(positive_trajectory, negative_trajectory, ncol = 2, nrow = 1, top = textGrob("Aligned aggregated time-normalized mouse trajectories",gp=gpar(fontsize=18,font=3)))
+
+# Saving the plot
+ggsave(file = "Aligned aggregated time-normalized mouse trajectories for negative valence images.pdf", mouse_trac, width = 20, height = 10, units = "cm")
+```
+
+
+```{r}
+#Quantifying mousetracking
+
+#the metrics are as follows:
+  #* MAD describes the maximum absolute deviation from the direct path connecting the start        and end point of the trajectory (if going in a straight line). Meaning that a value of 0      would be ideal.
+  #* AD denotes the average deviation from the the direct path.
+  #* AUC denotes the area under the curve; meaning the geometric area between the actual           trajectory and the direct path where the area below the the direct path has been              subtracted
+  #* xpos_flips denotes the average number of directional changes along the x-axis
+  #* RT denotes the average response time for the trials
+
+#calculating new coloun for the metrics (MAD, AD) used below
+mp_correct <- mt_measures(mp_correct)
+mn_correct <- mt_measures(mn_correct)
+
+mt_aggregate(
+  mp_correct, use = "measures",
+  use_variables = c("MAD", "AD", "AUC", "xpos_flips", "RT"),
+  use2_variables = "condition",
+  subject_id = "subject_nr"
+)
+
+mt_aggregate(
+  mn_correct, use = "measures",
+  use_variables = c("MAD", "AD", "AUC", "xpos_flips", "RT"),
+  use2_variables = "condition",
+  subject_id = "subject_nr"
+)
+```
+
